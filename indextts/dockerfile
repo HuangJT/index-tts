@@ -1,0 +1,51 @@
+# 基础镜像：Ubuntu 22.04 + CUDA 12.8（与 PyTorch 版本匹配）
+FROM nvidia/cuda:12.8.0-cudnn8-runtime-ubuntu22.04
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/root/miniconda3/bin:${PATH}"
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y \
+    wget \
+    ffmpeg \
+    build-essential \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Miniconda（管理 Python 环境）
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh \
+    && bash miniconda.sh -b -p /root/miniconda3 \
+    && rm miniconda.sh \
+    && conda init bash
+
+# 创建并激活 conda 环境
+RUN conda create -n index-tts python=3.10 -y \
+    && echo "conda activate index-tts" >> ~/.bashrc
+
+# 切换到 index-tts 环境安装依赖
+SHELL ["/bin/bash", "-c", "source ~/.bashrc && conda activate index-tts && $0 $@"]
+
+# 安装 PyTorch（CUDA 12.8 版本）
+RUN pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# 解决 pynini 安装问题
+RUN conda install -c conda-forge pynini==2.1.6 -y \
+    && pip install WeTextProcessing --no-deps
+
+# 创建工作目录，并复制本地代码到容器中
+WORKDIR /workspace/index-tts
+COPY . .  # 复制当前目录（本地 index-tts 仓库）所有文件到容器的 /workspace/index-tts
+
+# 安装 IndexTTS 包和 WebUI 依赖
+RUN pip install -e . \
+    && pip install -e ".[webui]" --no-build-isolation
+
+# （可选）安装 deepspeed（Linux 环境兼容性更好）
+RUN pip install deepspeed
+
+# 暴露 WebUI 端口
+EXPOSE 7860
+
+# 启动命令
+CMD ["bash", "-c", "source ~/.bashrc && conda activate index-tts && python webui.py --model_dir checkpoints --share"]

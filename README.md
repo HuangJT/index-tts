@@ -111,6 +111,59 @@ The main improvements and contributions are summarized as follows:
 | **IndexTTS**    |    **3.79**     |    **4.20**    |    **4.05**     |   **4.01**    |
 
 
+## 🆕 HTTP API 支持
+
+本项目已添加完整的HTTP API支持，可通过RESTful接口调用TTS服务，支持音调、语速、音量控制。
+
+### 快速开始API服务
+
+```bash
+# 1. 准备参考音频文件
+mkdir -p reference_audios
+cp "your_reference_audio.mp3" reference_audios/
+
+# 2. 启动API服务 (同时启动Web界面)
+python start_services.py --mode both
+
+# 3. 测试API功能
+python test_api.py
+```
+
+### API调用示例
+
+```python
+import requests
+
+# 合成语音
+data = {
+    "text": "你好，这是通过API调用的语音合成。",
+    "reference_audio": "your_reference_audio.mp3",
+    "pitch_shift": 2.0,    # 提高2个半音
+    "speed_rate": 1.2,     # 语速加快20%
+    "volume_gain": 3.0     # 音量增加3dB
+}
+response = requests.post("http://localhost:8000/synthesize", json=data)
+```
+
+详细文档请参考: [API.md](API.md) | [使用说明.md](使用说明.md)
+
+## 构建 Docker 容器
+
+本项目增加提供了两种 Dockerfile，分别适用于不同的部署场景（构建镜像前先将模型文件下载到checkpoints目录下）：
+
+### 1. 构建阿里云函数计算专用镜像（Dockerfile-aliyun-fc）
+```bash
+docker build -t index-tts:aliyun-fc -f Dockerfile-aliyun-fc .
+```
+或者可使用已经构建好的公开镜像：
+```bash
+docker pull tate2025/index-tts:aliyun-fc
+```
+### 2. 构建本地适用于5070Ti显卡的镜像（Dockerfile-aliyun-fc）
+```bash
+docker build -t index-tts:local-5070ti -f Dockerfile-local-5070ti .
+```
+
 ## Usage Instructions
 ### Environment Setup
 1. Download this repository:

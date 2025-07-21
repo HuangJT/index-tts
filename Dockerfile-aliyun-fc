@@ -1,0 +1,88 @@
+FROM --platform=linux/amd64 nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+
+# 环境变量：适配阿里云函数计算
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH="/root/miniconda3/bin:${PATH}" \
+    TORCH_CUDA_ARCH_LIST="5.0;5.2;6.0;6.1;7.0;7.5;8.0;8.6;8.9;9.0+PTX" \
+    CAPORT=9000 \
+    PYTHONUNBUFFERED=1 \
+    CUDA_LAUNCH_BLOCKING=1 \
+    FORCE_CUDA=1
+
+# 关键修改：更换Ubuntu源为清华大学镜像（解决网络超时和GPG key问题）
+RUN sed -i 's@archive.ubuntu.com@mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list && \
+    sed -i 's@security.ubuntu.com@mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list && \
+    # 解决GPG签名问题
+    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys A4B469963BF863CC && \
+    # 先更新源，再安装依赖（添加--fix-missing处理部分包下载失败）
+    apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends \
+        wget \
+        ffmpeg \
+        build-essential \
+        ninja-build \
+        ca-certificates \
+        curl \
+        git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# 安装Miniconda（使用官方源确保稳定性）
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh && \
+    bash miniconda.sh -b -p /root/miniconda3 && \
+    rm miniconda.sh && \
+    # 配置conda国内镜像（使用清华源，稳定可靠）
+    /root/miniconda3/bin/conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main && \
+    /root/miniconda3/bin/conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free && \
+    /root/miniconda3/bin/conda config --set show_channel_urls yes
+
+# 创建并激活Conda环境（先接受条款，再创建环境）
+RUN /root/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    /root/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
+    /root/miniconda3/bin/conda create -n index-tts python=3.10 -y && \
+    echo ". /root/miniconda3/etc/profile.d/conda.sh && conda activate index-tts" >> ~/.bashrc
+
+# 安装PyTorch 2.3.0 + CUDA 11.8（兼容CUDA 12.8驱动）
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    pip install torch==2.3.0 torchaudio==2.3.0 --index-url https://download.pytorch.org/whl/cu118 -i https://mirrors.aliyun.com/pypi/simple/ --no-cache-dir 
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    conda install -c conda-forge pynini==2.1.6 -y 
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    pip install WeTextProcessing --no-deps -i https://mirrors.aliyun.com/pypi/simple/ --no-cache-dir
+
+# 复制代码并安装项目依赖
+WORKDIR /workspace/index-tts
+COPY . .
+
+# 安装项目依赖（优化安装顺序，减少构建时间）
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --no-cache-dir 
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    pip install -e . -i https://mirrors.aliyun.com/pypi/simple/ --no-cache-dir
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    pip install -e ".[webui]" --no-build-isolation -i https://mirrors.aliyun.com/pypi/simple/ --no-cache-dir 
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    pip install deepspeed -i https://mirrors.aliyun.com/pypi/simple/ --no-cache-dir
+
+# 清理缓存和临时文件，减小镜像体积
+RUN /root/miniconda3/bin/conda run -n index-tts conda clean -a -y && \
+    /root/miniconda3/bin/conda run -n index-tts pip cache purge && \
+    apt-get remove -y --auto-remove build-essential ninja-build && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+           /root/miniconda3/pkgs/* \
+           /workspace/index-tts/*.egg-info \
+           /workspace/index-tts/build
+
+# 创建目录
+RUN mkdir -p /workspace/index-tts/outputs/api /workspace/index-tts/reference_audios
+
+# 暴露CAPort（必须与函数计算配置一致，默认9000）
+EXPOSE $CAPORT
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:9000/docs || exit 1
+
+# 启动命令：使用API服务，监听0.0.0.0:9000，支持Keep-Alive
+CMD ["/bin/bash", "-c", ". /root/miniconda3/etc/profile.d/conda.sh && conda activate index-tts && python -m uvicorn api_server:app --host 0.0.0.0 --port 9000 --timeout-keep-alive 0"]

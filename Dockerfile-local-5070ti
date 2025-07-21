@@ -1,0 +1,67 @@
+# 基础镜像：使用存在的 CUDA 12.8 版本
+FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive
+ENV GRADIO_ANALYTICS_ENABLED=False
+ENV PATH="/root/miniconda3/bin:${PATH}"
+
+# 单独更新 apt 源（拆分步骤1）
+RUN apt-get update
+
+# 单独安装 wget（拆分步骤2）
+RUN apt-get install -y wget 
+
+# 单独安装 ffmpeg（拆分步骤3）
+RUN apt-get install -y --fix-missing --no-install-recommends ffmpeg
+
+# 单独安装 build-essential（拆分步骤4）
+RUN apt-get install -y --fix-missing --no-install-recommends build-essential
+
+# 单独安装 ninja-build（拆分步骤5）
+RUN apt-get install -y --fix-missing --no-install-recommends ninja-build
+
+# 安装 Miniconda
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh && \
+    bash miniconda.sh -b -p /root/miniconda3 && \
+    rm miniconda.sh && \
+    /root/miniconda3/bin/conda init bash
+
+# 创建 Conda 环境（先接受条款，再创建环境）
+RUN /root/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    /root/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
+    /root/miniconda3/bin/conda create -n index-tts python=3.10 -y && \
+    echo "conda activate index-tts" >> ~/.bashrc
+
+# 定义 Conda 环境执行函数（简化后续命令）
+RUN echo 'alias activate="source /root/miniconda3/bin/activate"' >> ~/.bashrc
+
+# 安装 PyTorch（使用绝对路径执行 conda 命令）
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# 安装 pynini 和 WeTextProcessing
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    conda install -c conda-forge pynini==2.1.6 -y && \
+    /root/miniconda3/bin/conda run -n index-tts \
+    pip install WeTextProcessing --no-deps
+
+# 复制本地代码
+WORKDIR /workspace/index-tts
+COPY . .
+
+# 安装 IndexTTS 和 WebUI 依赖（手动指定 CUDA 架构）
+RUN export TORCH_CUDA_ARCH_LIST="12.0" &&     /root/miniconda3/bin/conda run -n index-tts     pip install -e . &&     /root/miniconda3/bin/conda run -n index-tts     pip install -e ".[webui]" --no-build-isolation
+
+# Install dependencies from requirements.txt
+RUN /root/miniconda3/bin/conda run -n index-tts pip install -r requirements.txt
+
+# 可选：安装 deepspeed
+RUN /root/miniconda3/bin/conda run -n index-tts \
+    pip install deepspeed
+
+# 暴露端口 (API服务8000端口 + WebUI服务7860端口)
+EXPOSE 8000 7860
+
+# 启动命令：先加载配置，再激活环境，最后启动API和WebUI服务
+CMD ["/bin/bash", "-c", ". /root/miniconda3/etc/profile.d/conda.sh && conda activate index-tts && python start_services.py --mode both --api-host 0.0.0.0 --webui-host 0.0.0.0"]

@@ -20,6 +20,10 @@ sentencepiece
 librosa
 gradio
 tqdm
+fastapi
+uvicorn[standard]
+python-multipart
+pydub
 
 WeTextProcessing; platform_machine != "Darwin"
 wetext; platform_system == "Darwin"

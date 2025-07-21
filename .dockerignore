@@ -1,0 +1,7 @@
+
+.git
+*.log
+examples/
+outputs/
+*.tar.gz
+__pycache__/
