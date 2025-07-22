@@ -247,7 +247,7 @@ class IndexTTS:
             # 1.5版本以上，直接使用stop_text_token 右侧填充，填充到最大长度
             # [1, N] -> [N,]
             tokens = [t.squeeze(0) for t in tokens]
-            return pad_sequence(tokens, batch_first=True, padding_value=self.cfg.gpt.stop_text_token, padding_side="right")
+            return pad_sequence(tokens, batch_first=True, padding_value=self.cfg.gpt.stop_text_token)
         max_len = max(t.size(1) for t in tokens)
         outputs = []
         for tensor in tokens:
